@@ -1,5 +1,4 @@
-use teloxide::prelude::*;
-use crate::{database::Database, ml::is_spam_or_toxic};  // tambahkan import ml
+use crate::database::Database;
 
 pub async fn handle_message(bot: Bot, db: Database, msg: Message) -> ResponseResult<()> {
     let chat_id = msg.chat.id.0;
@@ -26,13 +25,10 @@ pub async fn handle_message(bot: Bot, db: Database, msg: Message) -> ResponseRes
     let contains_blacklist = blacklist.iter().any(|kw| text.contains(&kw.to_lowercase()));
     let whitelisted = whitelist.iter().any(|kw| text.contains(&kw.to_lowercase()));
 
-    // Panggil ML deteksi toxic/spam
-    let detected_by_ml = is_spam_or_toxic(&text).await;
-
-    if (contains_suspicious || contains_mention || contains_blacklist || detected_by_ml) && !whitelisted {
+    if (contains_suspicious || contains_mention || contains_blacklist) && !whitelisted {
         if let Some(id) = msg.id {
             let _ = bot.delete_message(msg.chat.id, id).await;
-            let _ = bot.send_message(msg.chat.id, "🚫 Pesan mencurigakan dihapus (deteksi ML & keyword).").await;
+            let _ = bot.send_message(msg.chat.id, "🚫 Pesan mencurigakan dihapus.").await;
         }
     }
 
