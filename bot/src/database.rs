@@ -1,7 +1,9 @@
 use mongodb::{Client, Collection, options::ClientOptions, bson::doc};
 use crate::models::{BlacklistItem, WhitelistItem, GroupSettings};
+use futures::stream::StreamExt;
 use std::env;
 
+#[derive(Clone)]
 pub struct Database {
     pub blacklist: Collection<BlacklistItem>,
     pub whitelist: Collection<WhitelistItem>,
@@ -53,13 +55,18 @@ impl Database {
     }
 
     pub async fn list_blacklist(&self, group_id: i64) -> Vec<String> {
-        self.blacklist
+        let mut cursor = self.blacklist
             .find(doc! { "group_id": group_id }, None)
             .await
-            .unwrap()
-            .filter_map(|res| async move { res.ok().map(|b| b.keyword) })
-            .collect()
-            .await
+            .unwrap();
+        
+        let mut keywords = Vec::new();
+        while let Some(result) = cursor.next().await {
+            if let Ok(item) = result {
+                keywords.push(item.keyword);
+            }
+        }
+        keywords
     }
 
     pub async fn add_whitelist(&self, group_id: i64, keyword: String) {
@@ -68,12 +75,17 @@ impl Database {
     }
 
     pub async fn list_whitelist(&self, group_id: i64) -> Vec<String> {
-        self.whitelist
+        let mut cursor = self.whitelist
             .find(doc! { "group_id": group_id }, None)
             .await
-            .unwrap()
-            .filter_map(|res| async move { res.ok().map(|b| b.keyword) })
-            .collect()
-            .await
+            .unwrap();
+        
+        let mut keywords = Vec::new();
+        while let Some(result) = cursor.next().await {
+            if let Ok(item) = result {
+                keywords.push(item.keyword);
+            }
+        }
+        keywords
     }
 }
