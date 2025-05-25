@@ -1,63 +1,79 @@
-use mongodb::{Client, Database, options::ClientOptions};
-use mongodb::bson::doc;
-use crate::models::*;
-use thiserror::Error;
+use mongodb::{Client, Collection, options::ClientOptions, bson::doc};
+use crate::models::{BlacklistItem, WhitelistItem, GroupSettings};
+use std::env;
 
-#[derive(Clone)]
-pub struct MongoDb {
-    db: Database,
+pub struct Database {
+    pub blacklist: Collection<BlacklistItem>,
+    pub whitelist: Collection<WhitelistItem>,
+    pub settings: Collection<GroupSettings>,
 }
 
-#[derive(Error, Debug)]
-pub enum DbError {
-    #[error("MongoDB error: {0}")]
-    Mongo(#[from] mongodb::error::Error),
-    #[error("Invalid data format: {0}")]
-    DataFormat(String),
-}
+impl Database {
+    pub async fn init() -> Self {
+        dotenv::dotenv().ok();
+        let uri = env::var("MONGODB_URI").expect("MONGODB_URI must be set");
 
-impl MongoDb {
-    pub async fn new(uri: &str, db_name: &str) -> Result<Self, DbError> {
-        let mut client_options = ClientOptions::parse(uri).await?;
-        client_options.app_name = Some("telegram-antispam-bot".to_string());
-        client_options.max_pool_size = Some(100);
-        client_options.min_pool_size = Some(10);
-        client_options.connect_timeout = Some(Duration::from_secs(5));
-        client_options.server_selection_timeout = Some(Duration::from_secs(5));
-        
-        let client = Client::with_options(client_options)?;
-        let db = client.database(db_name);
-        
-        Ok(Self { db })
+        let client_options = ClientOptions::parse(uri).await.unwrap();
+        let client = Client::with_options(client_options).unwrap();
+        let db = client.database("antigcast");
+
+        Self {
+            blacklist: db.collection("blacklist"),
+            whitelist: db.collection("whitelist"),
+            settings: db.collection("settings"),
+        }
     }
 
-    pub async fn get_group_settings(&self, chat_id: i64) -> Result<Option<GroupSettings>, DbError> {
-        self.db.collection::<GroupSettings>("group_settings")
-            .find_one(doc! { "_id": chat_id }, None)
-            .await
-            .map_err(Into::into)
+    pub async fn is_enabled(&self, group_id: i64) -> bool {
+        match self.settings.find_one(doc! { "group_id": group_id }, None).await {
+            Ok(Some(s)) => s.enabled,
+            _ => false,
+        }
     }
 
-    pub async fn set_group_active(&self, chat_id: i64, active: bool) -> Result<(), DbError> {
-        let settings = GroupSettings {
-            chat_id,
-            is_active: active,
-            updated_at: chrono::Utc::now(),
-        };
-
-        self.db.collection::<GroupSettings>("group_settings")
+    pub async fn set_enabled(&self, group_id: i64, enable: bool) {
+        let _ = self.settings
             .update_one(
-                doc! { "_id": chat_id },
-                doc! { "$set": mongodb::bson::to_bson(&settings)? },
-                mongodb::options::UpdateOptions::builder()
-                    .upsert(true)
-                    .build(),
+                doc! { "group_id": group_id },
+                doc! { "$set": { "enabled": enable } },
+                mongodb::options::UpdateOptions::builder().upsert(true).build(),
             )
-            .await?;
-
-        Ok(())
+            .await;
     }
 
-    // Implementasi method lainnya untuk blacklist/whitelist dengan pola serupa
-    // ...
+    pub async fn add_blacklist(&self, group_id: i64, keyword: String) {
+        let item = BlacklistItem { id: None, group_id, keyword };
+        let _ = self.blacklist.insert_one(item, None).await;
+    }
+
+    pub async fn remove_blacklist(&self, group_id: i64, keyword: String) {
+        let _ = self.blacklist
+            .delete_one(doc! { "group_id": group_id, "keyword": &keyword }, None)
+            .await;
+    }
+
+    pub async fn list_blacklist(&self, group_id: i64) -> Vec<String> {
+        self.blacklist
+            .find(doc! { "group_id": group_id }, None)
+            .await
+            .unwrap()
+            .filter_map(|res| async move { res.ok().map(|b| b.keyword) })
+            .collect()
+            .await
+    }
+
+    pub async fn add_whitelist(&self, group_id: i64, keyword: String) {
+        let item = WhitelistItem { id: None, group_id, keyword };
+        let _ = self.whitelist.insert_one(item, None).await;
+    }
+
+    pub async fn list_whitelist(&self, group_id: i64) -> Vec<String> {
+        self.whitelist
+            .find(doc! { "group_id": group_id }, None)
+            .await
+            .unwrap()
+            .filter_map(|res| async move { res.ok().map(|b| b.keyword) })
+            .collect()
+            .await
+    }
 }
