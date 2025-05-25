@@ -1,6 +1,6 @@
 use mongodb::{Client, Collection, options::ClientOptions, bson::doc};
 use crate::models::{BlacklistItem, WhitelistItem, GroupSettings};
-use futures::stream::StreamExt;
+use futures_util::stream::StreamExt;
 use std::env;
 
 #[derive(Clone)]
