@@ -3,6 +3,7 @@ use teloxide::{prelude::*, dispatching::UpdateFilterExt};
 mod admin;
 mod message;
 mod database;
+mod models;
 
 use admin::{AdminCommand, handle_command};
 use message::handle_message;
