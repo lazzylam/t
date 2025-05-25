@@ -1,4 +1,6 @@
 use teloxide::{prelude::*, dispatching::UpdateFilterExt};
+use teloxide::error_handlers::ErrorHandler;
+use futures_util::future::BoxFuture;
 
 mod admin;
 mod message;
@@ -70,7 +72,6 @@ async fn main() {
 }
 
 // Custom error handler yang tidak memperlambat performa
-use teloxide::dispatching::dialogue::GetChatId;
 use std::fmt::Debug;
 
 struct LoggingErrorHandler;
@@ -81,11 +82,11 @@ impl LoggingErrorHandler {
     }
 }
 
-impl<E> teloxide::dispatching::ErrorHandler<E> for LoggingErrorHandler
+impl<E> ErrorHandler<E> for LoggingErrorHandler
 where
     E: Debug,
 {
-    fn handle_error(self: std::sync::Arc<Self>, error: E) -> teloxide::dispatching::BoxFuture<'static, ()> {
+    fn handle_error(self: std::sync::Arc<Self>, error: E) -> BoxFuture<'static, ()> {
         Box::pin(async move {
             log::debug!("Dispatcher error: {:?}", error);
         })
