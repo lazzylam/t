@@ -22,6 +22,13 @@ pub enum AdminCommand {
     Help,
 }
 
+async fn is_user_admin(bot: &Bot, chat_id: i64, user_id: i64) -> bool {
+    match bot.get_chat_administrators(ChatId(chat_id)).await {
+        Ok(admins) => admins.iter().any(|admin| admin.user.id.0 == user_id),
+        Err(_) => false,
+    }
+}
+
 pub async fn handle_command(
     bot: Bot,
     db: Database,
@@ -29,6 +36,18 @@ pub async fn handle_command(
     cmd: AdminCommand,
 ) -> ResponseResult<()> {
     let chat_id = msg.chat.id.0;
+    let user_id = match msg.from() {
+        Some(u) => u.id.0,
+        None => {
+            bot.send_message(chat_id, "⚠️ Tidak dapat verifikasi pengguna.").await?;
+            return Ok(());
+        }
+    };
+
+    if !is_user_admin(&bot, chat_id, user_id).await {
+        bot.send_message(chat_id, "⚠️ Hanya admin yang dapat menggunakan perintah ini.").await?;
+        return Ok(());
+    }
 
     match cmd {
         AdminCommand::On => {
