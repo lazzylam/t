@@ -1,6 +1,6 @@
 use teloxide::{prelude::*, dispatching::UpdateFilterExt, utils::command::BotCommands};
 use teloxide::types::ChatId;
-use src::{admin::{AdminCommand, handle_command}, message::handle_message, database::Database};
+use bot::{admin::{AdminCommand, handle_command}, message::handle_message, database::Database};
 
 #[tokio::main]
 async fn main() {
