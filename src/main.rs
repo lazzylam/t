@@ -1,42 +1,31 @@
-mod models;
-mod database;
-mod handlers;
-mod utils;
-
-use teloxide::prelude::*;
-use database::MongoDb;
-use handlers::{admin::AdminCommand, message::handle_message};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use teloxide::{prelude::*, dispatching::UpdateFilterExt, utils::command::BotCommands};
+use t::{admin::{AdminCommand, handle_command}, message::handle_message, database::Database};
 
 #[tokio::main]
 async fn main() {
+    dotenv::dotenv().ok();
     pretty_env_logger::init();
-    log::info!("Starting Anti-Spam Bot with MongoDB...");
-
-    // Initialize MongoDB
-    let mongodb_uri = std::env::var("MONGODB_URI")
-        .expect("MONGODB_URI must be set");
-    let db = MongoDb::new(&mongodb_uri, "antispam_bot")
-        .await
-        .expect("Failed to connect to MongoDB");
+    log::info!("Bot anti-gcast dimulai...");
 
     let bot = Bot::from_env();
-    let db_arc = Arc::new(Mutex::new(db));
+    let db = Database::init().await;
 
-    let handler = Update::filter_message()
+    // Clone DB untuk handler message
+    let db_message = db.clone();
+
+    Dispatcher::builder(bot.clone(), Update::filter_message())
         .branch(
             dptree::entry()
                 .filter_command::<AdminCommand>()
-                .endpoint(handlers::admin::admin_command_handler)
+                .endpoint(move |bot: Bot, msg: Message, cmd: AdminCommand| {
+                    let db = db.clone();
+                    async move { handle_command(bot, db, msg, cmd).await }
+                }),
         )
-        .branch(
-            dptree::filter(|msg: Message| msg.chat.is_group() || msg.chat.is_supergroup())
-                .endpoint(handlers::message::handle_message),
-        );
-
-    Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![db_arc])
+        .default_handler(move |bot: Bot, msg: Message| {
+            let db = db_message.clone();
+            async move { handle_message(bot, db, msg).await.unwrap_or(()) }
+        })
         .enable_ctrlc_handler()
         .build()
         .dispatch()
