@@ -19,20 +19,24 @@ pub async fn handle_message(bot: Bot, db: Database, msg: Message) -> ResponseRes
     let blacklist = db.list_blacklist(chat_id).await;
     let whitelist = db.list_whitelist(chat_id).await;
 
-    // Periksa apakah teks mengandung keyword blacklist
-    for keyword in blacklist {
-        if text.contains(&keyword.to_lowercase()) {
-            // Abaikan jika keyword juga masuk whitelist
-            if whitelist.iter().any(|w| text.contains(&w.to_lowercase())) {
-                return Ok(());
-            }
+    // Deteksi manual kata mencurigakan (anti-GC)
+    let suspicious_keywords = ["tmo", "vcs", "vcan", "vcs-an"];
+    let contains_suspicious = suspicious_keywords.iter().any(|kw| text.contains(kw));
 
-            // Hapus pesan yang mencurigakan
-            if let Some(id) = msg.id {
-                let _ = bot.delete_message(msg.chat.id, id).await;
-                let _ = bot.send_message(msg.chat.id, "🚫 Pesan otomatis dihapus karena mengandung kata terlarang.").await;
-            }
-            break;
+    // Deteksi mention
+    let contains_mention = text
+        .split_whitespace()
+        .any(|word| word.starts_with('@') && word.len() > 1 && word.chars().all(|c| c.is_alphanumeric() || c == '_'));
+
+    // Deteksi keyword blacklist
+    let contains_blacklist = blacklist.iter().any(|kw| text.contains(&kw.to_lowercase()));
+    let whitelisted = whitelist.iter().any(|kw| text.contains(&kw.to_lowercase()));
+
+    // Jika pesan mencurigakan & tidak ada dalam whitelist, hapus
+    if (contains_suspicious || contains_mention || contains_blacklist) && !whitelisted {
+        if let Some(id) = msg.id {
+            let _ = bot.delete_message(msg.chat.id, id).await;
+            let _ = bot.send_message(msg.chat.id, "🚫 Pesan mencurigakan dihapus.").await;
         }
     }
 
