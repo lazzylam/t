@@ -1,192 +1,202 @@
-use teloxide::prelude::*;
-use crate::database::Database;
-use regex::Regex;
+use mongodb::{Client, Collection, options::{ClientOptions, FindOptions}, bson::doc};
+use crate::models::{BlacklistItem, WhitelistItem, GroupSettings};
+use futures_util::stream::StreamExt;
+use std::env;
 use dashmap::DashMap;
-use once_cell::sync::Lazy;
+use std::time::{Duration, Instant};
 use std::sync::Arc;
 
-// Ultra-fast concurrent storage untuk duplicate detection
-static LAST_MESSAGES: Lazy<Arc<DashMap<i64, String>>> = Lazy::new(|| Arc::new(DashMap::new()));
-
-// Pre-compiled regex patterns - kompilasi sekali saja
-static MENTION_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"@[\w\d_]{5,}").unwrap());
-static URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"https?://\S+|t\.me/\S+|wa\.me/\S+|bit\.ly/\S+").unwrap());
-static EMOJI_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\u{1F600}-\u{1F64F}\u{2700}-\u{27BF}\u{1F680}-\u{1F6FF}\u{1F300}-\u{1F5FF}]").unwrap());
-
-// Suspicious keywords dalam static array untuk performa maksimal
-const SUSPICIOUS_KEYWORDS: [&str; 4] = ["tmo", "vcs", "vcan", "vcs-an"];
-
-pub async fn handle_message(bot: Bot, db: Database, msg: Message) -> ResponseResult<()> {
-    let chat_id = msg.chat.id.0;
-    let message_id = msg.id;
-
-    // Super early return untuk non-text messages
-    let text = match msg.text() {
-        Some(t) if !t.trim().is_empty() => t.to_lowercase(),
-        _ => return Ok(()),
-    };
-
-    // Batch database operations dalam satu call
-    let (is_enabled, blacklist, whitelist) = db.get_chat_data(chat_id).await;
-
-    if !is_enabled {
-        return Ok(());
-    }
-
-    // Fastest whitelist check menggunakan iterator optimized
-    if whitelist.iter().any(|kw| text.contains(&kw.to_lowercase())) {
-        return Ok(());
-    }
-
-    // Lightning-fast duplicate detection menggunakan DashMap
-    let is_duplicate = {
-        match LAST_MESSAGES.get(&chat_id) {
-            Some(prev) if prev.value() == &text => true,
-            _ => {
-                LAST_MESSAGES.insert(chat_id, text.clone());
-                false
-            }
-        }
-    };
-
-    // Batch semua checks dalam satu pipeline untuk maksimal efisiensi
-    let should_delete = is_duplicate
-        || SUSPICIOUS_KEYWORDS.iter().any(|&kw| text.contains(kw))
-        || MENTION_RE.is_match(&text)
-        || URL_RE.is_match(&text)
-        || EMOJI_RE.find_iter(&text).count() > 5
-        || blacklist.iter().any(|kw| text.contains(&kw.to_lowercase()));
-
-    if should_delete {
-        // Ultimate silent deletion - fire-and-forget dengan minimal overhead
-        let bot_clone = bot.clone();
-        let chat_id_clone = msg.chat.id;
-        tokio::spawn(async move {
-            let _ = bot_clone.delete_message(chat_id_clone, message_id).await;
-        });
-    }
-
-    Ok(())
+#[derive(Clone)]
+struct CacheEntry {
+    data: Vec<String>,
+    last_updated: Instant,
 }
-
-// Advanced version dengan predictive caching untuk grup yang sangat aktif
-use std::time::{Duration, Instant};
 
 #[derive(Clone)]
-struct MessageStats {
-    count: u32,
-    last_message: Instant,
+struct SettingsCache {
+    enabled: bool,
+    last_updated: Instant,
 }
 
-static MESSAGE_STATS: Lazy<Arc<DashMap<i64, MessageStats>>> = Lazy::new(|| Arc::new(DashMap::new()));
+#[derive(Clone)]
+pub struct Database {
+    pub blacklist: Collection<BlacklistItem>,
+    pub whitelist: Collection<WhitelistItem>,
+    pub settings: Collection<GroupSettings>,
+    // High-performance concurrent caches
+    blacklist_cache: Arc<DashMap<i64, CacheEntry>>,
+    whitelist_cache: Arc<DashMap<i64, CacheEntry>>,
+    settings_cache: Arc<DashMap<i64, SettingsCache>>,
+}
 
-pub async fn handle_message_predictive(bot: Bot, db: Database, msg: Message) -> ResponseResult<()> {
-    let chat_id = msg.chat.id.0;
-    let message_id = msg.id;
+impl Database {
+    pub async fn init() -> Self {
+        dotenv::dotenv().ok();
+        let uri = env::var("MONGODB_URI").expect("MONGODB_URI must be set");
 
-    let text = match msg.text() {
-        Some(t) if !t.trim().is_empty() => t.to_lowercase(),
-        _ => return Ok(()),
-    };
+        let mut client_options = ClientOptions::parse(uri).await.unwrap();
+        // Optimasi koneksi MongoDB
+        client_options.max_pool_size = Some(20);
+        client_options.min_pool_size = Some(5);
+        client_options.max_idle_time = Some(Duration::from_secs(30));
+        client_options.server_selection_timeout = Some(Duration::from_secs(5));
 
-    // Track message frequency untuk predictive caching
-    let now = Instant::now();
-    let is_high_traffic = {
-        match MESSAGE_STATS.get_mut(&chat_id) {
-            Some(mut stats) => {
-                stats.count += 1;
-                if stats.last_message.elapsed() < Duration::from_secs(1) {
-                    stats.count > 10 // High traffic jika >10 msg/detik
-                } else {
-                    stats.count = 1;
-                    stats.last_message = now;
-                    false
-                }
-            }
-            None => {
-                MESSAGE_STATS.insert(chat_id, MessageStats {
-                    count: 1,
-                    last_message: now,
-                });
-                false
+        let client = Client::with_options(client_options).unwrap();
+        let db = client.database("antigcast");
+
+        Self {
+            blacklist: db.collection("blacklist"),
+            whitelist: db.collection("whitelist"),
+            settings: db.collection("settings"),
+            blacklist_cache: Arc::new(DashMap::new()),
+            whitelist_cache: Arc::new(DashMap::new()),
+            settings_cache: Arc::new(DashMap::new()),
+        }
+    }
+
+    pub async fn is_enabled(&self, group_id: i64) -> bool {
+        // Check cache first
+        if let Some(cached) = self.settings_cache.get(&group_id) {
+            if cached.last_updated.elapsed() < Duration::from_secs(300) { // 5 menit cache
+                return cached.enabled;
             }
         }
-    };
 
-    // Gunakan strategi berbeda untuk high-traffic vs normal chat
-    let (is_enabled, blacklist, whitelist) = if is_high_traffic {
-        // Untuk high-traffic, prioritaskan cache
-        db.get_chat_data(chat_id).await
-    } else {
-        // Untuk normal traffic, batch query biasa
-        tokio::join!(
-            db.is_enabled(chat_id),
-            db.list_blacklist(chat_id),
-            db.list_whitelist(chat_id)
-        )
-    };
+        // Load from database if not cached or expired
+        let enabled = match self.settings.find_one(doc! { "group_id": group_id }, None).await {
+            Ok(Some(s)) => s.enabled,
+            _ => false,
+        };
 
-    if !is_enabled {
-        return Ok(());
+        // Update cache
+        self.settings_cache.insert(group_id, SettingsCache {
+            enabled,
+            last_updated: Instant::now(),
+        });
+
+        enabled
     }
 
-    // Pre-compute lowercase keywords untuk avoid repeated operations
-    let whitelist_lower: Vec<String> = whitelist.iter().map(|kw| kw.to_lowercase()).collect();
-    let blacklist_lower: Vec<String> = blacklist.iter().map(|kw| kw.to_lowercase()).collect();
+    pub async fn set_enabled(&self, group_id: i64, enable: bool) {
+        // Update database
+        let _ = self.settings
+            .update_one(
+                doc! { "group_id": group_id },
+                doc! { "$set": { "enabled": enable } },
+                mongodb::options::UpdateOptions::builder().upsert(true).build(),
+            )
+            .await;
 
-    // Ultra-fast whitelist check
-    if whitelist_lower.iter().any(|kw| text.contains(kw)) {
-        return Ok(());
-    }
-
-    // Optimized duplicate detection
-    let is_duplicate = LAST_MESSAGES
-        .get(&chat_id)
-        .map_or(false, |prev| prev.value() == &text);
-
-    if !is_duplicate {
-        LAST_MESSAGES.insert(chat_id, text.clone());
-    }
-
-    // Parallel regex checks untuk maximum speed
-    let (has_mention, has_url, emoji_count) = tokio::join!(
-        async { MENTION_RE.is_match(&text) },
-        async { URL_RE.is_match(&text) },
-        async { EMOJI_RE.find_iter(&text).count() }
-    );
-
-    // Kombinasi semua checks
-    let should_delete = is_duplicate
-        || SUSPICIOUS_KEYWORDS.iter().any(|&kw| text.contains(kw))
-        || has_mention
-        || has_url
-        || emoji_count > 5
-        || blacklist_lower.iter().any(|kw| text.contains(kw));
-
-    if should_delete {
-        // Absolute silent deletion - zero latency
-        tokio::task::spawn(async move {
-            let _ = bot.delete_message(msg.chat.id, message_id).await;
+        // Update cache immediately
+        self.settings_cache.insert(group_id, SettingsCache {
+            enabled: enable,
+            last_updated: Instant::now(),
         });
     }
 
-    Ok(())
-}
+    pub async fn add_blacklist(&self, group_id: i64, keyword: String) {
+        let item = BlacklistItem { id: None, group_id, keyword: keyword.clone() };
+        let _ = self.blacklist.insert_one(item, None).await;
 
-// Memory management untuk long-running bots
-pub async fn cleanup_old_messages() {
-    tokio::spawn(async {
-        let mut interval = tokio::time::interval(Duration::from_secs(3600)); // Cleanup setiap jam
-        loop {
-            interval.tick().await;
+        // Invalidate cache untuk refresh
+        self.blacklist_cache.remove(&group_id);
+    }
 
-            // Clean up old message cache (keep last 1000 per chat)
-            for _entry in LAST_MESSAGES.iter_mut() {
-                // Implement LRU-like cleanup if needed
+    pub async fn remove_blacklist(&self, group_id: i64, keyword: String) {
+        let _ = self.blacklist
+            .delete_one(doc! { "group_id": group_id, "keyword": &keyword }, None)
+            .await;
+
+        // Invalidate cache
+        self.blacklist_cache.remove(&group_id);
+    }
+
+    pub async fn list_blacklist(&self, group_id: i64) -> Vec<String> {
+        // Check cache first
+        if let Some(cached) = self.blacklist_cache.get(&group_id) {
+            if cached.last_updated.elapsed() < Duration::from_secs(300) {
+                return cached.data.clone();
             }
-
-            // Clean up old stats
-            MESSAGE_STATS.retain(|_, stats| stats.last_message.elapsed() < Duration::from_secs(3600));
         }
-    });
+
+        // Load from database with optimized query
+        let find_options = FindOptions::builder()
+            .projection(doc! { "keyword": 1, "_id": 0 })
+            .build();
+
+        let mut cursor = match self.blacklist
+            .find(doc! { "group_id": group_id }, find_options)
+            .await {
+                Ok(cursor) => cursor,
+                Err(_) => return Vec::new(),
+            };
+
+        let mut keywords = Vec::new();
+        while let Some(result) = cursor.next().await {
+            if let Ok(item) = result {
+                keywords.push(item.keyword);
+            }
+        }
+
+        // Update cache
+        self.blacklist_cache.insert(group_id, CacheEntry {
+            data: keywords.clone(),
+            last_updated: Instant::now(),
+        });
+
+        keywords
+    }
+
+    pub async fn add_whitelist(&self, group_id: i64, keyword: String) {
+        let item = WhitelistItem { id: None, group_id, keyword: keyword.clone() };
+        let _ = self.whitelist.insert_one(item, None).await;
+
+        // Invalidate cache
+        self.whitelist_cache.remove(&group_id);
+    }
+
+    pub async fn list_whitelist(&self, group_id: i64) -> Vec<String> {
+        // Check cache first
+        if let Some(cached) = self.whitelist_cache.get(&group_id) {
+            if cached.last_updated.elapsed() < Duration::from_secs(300) {
+                return cached.data.clone();
+            }
+        }
+
+        // Load from database with optimized query
+        let find_options = FindOptions::builder()
+            .projection(doc! { "keyword": 1, "_id": 0 })
+            .build();
+
+        let mut cursor = match self.whitelist
+            .find(doc! { "group_id": group_id }, find_options)
+            .await {
+                Ok(cursor) => cursor,
+                Err(_) => return Vec::new(),
+            };
+
+        let mut keywords = Vec::new();
+        while let Some(result) = cursor.next().await {
+            if let Ok(item) = result {
+                keywords.push(item.keyword);
+            }
+        }
+
+        // Update cache
+        self.whitelist_cache.insert(group_id, CacheEntry {
+            data: keywords.clone(),
+            last_updated: Instant::now(),
+        });
+
+        keywords
+    }
+
+    // Batch operations untuk performa yang lebih baik
+    pub async fn get_chat_data(&self, group_id: i64) -> (bool, Vec<String>, Vec<String>) {
+        tokio::join!(
+            self.is_enabled(group_id),
+            self.list_blacklist(group_id),
+            self.list_whitelist(group_id)
+        )
+    }
 }
