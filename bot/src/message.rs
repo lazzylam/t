@@ -4,7 +4,6 @@ use regex::Regex;
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
 use std::sync::Arc;
-use ahash::AHashMap;
 
 // Ultra-fast concurrent storage untuk duplicate detection
 static LAST_MESSAGES: Lazy<Arc<DashMap<i64, String>>> = Lazy::new(|| Arc::new(DashMap::new()));
@@ -144,7 +143,7 @@ pub async fn handle_message_predictive(bot: Bot, db: Database, msg: Message) -> 
     let is_duplicate = LAST_MESSAGES
         .get(&chat_id)
         .map_or(false, |prev| prev.value() == &text);
-    
+
     if !is_duplicate {
         LAST_MESSAGES.insert(chat_id, text.clone());
     }
@@ -180,12 +179,12 @@ pub async fn cleanup_old_messages() {
         let mut interval = tokio::time::interval(Duration::from_secs(3600)); // Cleanup setiap jam
         loop {
             interval.tick().await;
-            
+
             // Clean up old message cache (keep last 1000 per chat)
-            for mut entry in LAST_MESSAGES.iter_mut() {
+            for _entry in LAST_MESSAGES.iter_mut() {
                 // Implement LRU-like cleanup if needed
             }
-            
+
             // Clean up old stats
             MESSAGE_STATS.retain(|_, stats| stats.last_message.elapsed() < Duration::from_secs(3600));
         }
