@@ -1,6 +1,12 @@
 use teloxide::{prelude::*, dispatching::UpdateFilterExt};
 
-use crate::{admin::{AdminCommand, handle_command}, message::handle_message, database::Database};
+mod admin;
+mod message;
+mod database;
+
+use admin::{AdminCommand, handle_command};
+use message::handle_message;
+use database::Database;
 
 #[tokio::main]
 async fn main() {
