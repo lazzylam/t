@@ -18,7 +18,7 @@ async fn main() {
 
 
     let bot = Bot::from_env();
-    let db = Database::init().await;
+            let db = client.database("antigcast");
 
     let db_message = db.clone();
 
