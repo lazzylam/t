@@ -1,12 +1,16 @@
 use teloxide::{prelude::*, dispatching::UpdateFilterExt, utils::command::BotCommands};
-use teloxide::types::ChatId; // penting untuk is_user_admin
+use teloxide::types::ChatId;
 use t::{admin::{AdminCommand, handle_command}, message::handle_message, database::Database};
+mod ml;
 
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
     pretty_env_logger::init();
     log::info!("Bot anti-gcast dimulai...");
+
+    // Init ML model sekali saat startup
+    ml::init_model().await;
 
     let bot = Bot::from_env();
     let db = Database::init().await;
