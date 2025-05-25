@@ -8,6 +8,7 @@ mod models;
 use admin::{AdminCommand, handle_command};
 use message::handle_message;
 use database::Database;
+use models::{BlacklistItem, WhitelistItem, GroupSettings}
 
 #[tokio::main]
 async fn main() {
