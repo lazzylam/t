@@ -1,4 +1,5 @@
 use teloxide::{prelude::*, dispatching::UpdateFilterExt, utils::command::BotCommands};
+use teloxide::types::ChatId; // penting untuk is_user_admin
 use t::{admin::{AdminCommand, handle_command}, message::handle_message, database::Database};
 
 #[tokio::main]
@@ -10,7 +11,6 @@ async fn main() {
     let bot = Bot::from_env();
     let db = Database::init().await;
 
-    // Clone DB untuk handler message
     let db_message = db.clone();
 
     Dispatcher::builder(bot.clone(), Update::filter_message())
