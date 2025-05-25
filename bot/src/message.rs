@@ -66,12 +66,11 @@ pub async fn handle_message(bot: Bot, db: Database, msg: Message) -> ResponseRes
         || is_duplicate)
         && !whitelisted
     {
-        if let Some(id) = msg.id {
-            let _ = bot.delete_message(msg.chat.id, id).await;
-            let _ = bot
-                .send_message(msg.chat.id, "🚫 Pesan mencurigakan dihapus.")
-                .await;
-        }
+        let message_id = msg.id;
+        let _ = bot.delete_message(msg.chat.id, message_id).await;
+        let _ = bot
+            .send_message(msg.chat.id, "🚫 Pesan mencurigakan dihapus.")
+            .await;
     }
 
     Ok(())
