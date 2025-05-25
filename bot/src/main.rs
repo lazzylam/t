@@ -1,4 +1,5 @@
-use teloxide::{prelude::*, dispatching::UpdateFilterExt, utils::command::BotCommands};
+use teloxide::{prelude::*, dispatching::UpdateFilterExt};
+
 use crate::{admin::{AdminCommand, handle_command}, message::handle_message, database::Database};
 
 #[tokio::main]
