@@ -8,7 +8,7 @@ mod models;
 use admin::{AdminCommand, handle_command};
 use message::handle_message;
 use database::Database;
-use models::{BlacklistItem, WhitelistItem, GroupSettings}
+use models::{BlacklistItem, WhitelistItem, GroupSettings};
 
 #[tokio::main]
 async fn main() {
@@ -16,9 +16,8 @@ async fn main() {
     pretty_env_logger::init();
     log::info!("Bot anti-gcast dimulai...");
 
-
     let bot = Bot::from_env();
-            let db = client.database("antigcast");
+    let db = Database::init().await;
 
     let db_message = db.clone();
 
@@ -35,7 +34,7 @@ async fn main() {
             Update::filter_message()
                 .endpoint(move |bot: Bot, msg: Message| {
                     let db = db_message.clone();
-                    async move { handle_message(bot, db, msg).await.unwrap_or(()) }
+                    async move { handle_message(bot, db, msg).await }
                 })
         );
 
