@@ -34,7 +34,7 @@ async fn main() {
                 .filter_command::<AdminCommand>()
                 .endpoint(move |bot: Bot, msg: Message, cmd: AdminCommand| {
                     let db = db_admin.clone();
-                    async move { 
+                    async move -> Result<(), teloxide::RequestError> { 
                         // Wrap dengan error handling yang tidak mengganggu performa
                         match handle_command(bot, db, msg, cmd).await {
                             Ok(_) => Ok(()),
@@ -50,7 +50,7 @@ async fn main() {
             Update::filter_message()
                 .endpoint(move |bot: Bot, msg: Message| {
                     let db = db_message.clone();
-                    async move {
+                    async move -> Result<(), teloxide::RequestError> {
                         match message::handle_message(bot, db, msg).await {
                             Ok(_) => Ok(()),
                             Err(e) => {
