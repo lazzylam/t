@@ -65,7 +65,7 @@ async fn main() {
     // Optimized dispatcher dengan custom error handler
     Dispatcher::builder(bot, handler)
         .enable_ctrlc_handler()
-        .error_handler(LoggingErrorHandler::new())
+        .error_handler(Arc::new(LoggingErrorHandler::new()))
         .build()
         .dispatch()
         .await;
