@@ -9,7 +9,7 @@ mod database;
 mod models;
 
 use admin::{AdminCommand, handle_command};
-use message::{handle_message, cleanup_old_messages};
+use message::{cleanup_old_messages}; // Removed unused import
 use database::Database;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
@@ -47,20 +47,20 @@ async fn main() {
                 })
         )
         .branch(
-    Update::filter_message()
-        .endpoint(move |bot: Bot, msg: Message| {
-            let db = db_message.clone();
-            async move -> Result<(), Box<dyn std::error::Error + Send + Sync>> { 
-                match handle_message(bot, db, msg).await {
-                    Ok(_) => Ok(()),
-                    Err(e) => {
-                        log::debug!("Message handling error: {:?}", e);
-                        Ok(())
+            Update::filter_message()
+                .endpoint(move |bot: Bot, msg: Message| {
+                    let db = db_message.clone();
+                    async move {
+                        match message::handle_message(bot, db, msg).await {
+                            Ok(_) => Ok(()),
+                            Err(e) => {
+                                log::debug!("Message handling error: {:?}", e);
+                                Ok(())
+                            }
+                        }
                     }
-                }
-            }
-        })
-);
+                })
+        );
 
     // Optimized dispatcher dengan custom error handler
     Dispatcher::builder(bot, handler)
@@ -83,8 +83,8 @@ impl LoggingErrorHandler {
 }
 
 impl<E> ErrorHandler<E> for LoggingErrorHandler
-   where
-       E: Debug + Send + 'static,
+where
+    E: Debug + Send + 'static,
 {
     fn handle_error(self: std::sync::Arc<Self>, error: E) -> BoxFuture<'static, ()> {
         Box::pin(async move {
