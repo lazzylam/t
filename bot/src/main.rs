@@ -1,6 +1,7 @@
 use teloxide::{prelude::*, dispatching::UpdateFilterExt};
 use teloxide::error_handlers::ErrorHandler;
 use futures_util::future::BoxFuture;
+use std::sync::Arc;
 
 mod admin;
 mod message;
@@ -84,7 +85,7 @@ impl LoggingErrorHandler {
 
 impl<E> ErrorHandler<E> for LoggingErrorHandler
    where
-       E: Debug + Send,
+       E: Debug + Send + 'static,
 {
     fn handle_error(self: std::sync::Arc<Self>, error: E) -> BoxFuture<'static, ()> {
         Box::pin(async move {
