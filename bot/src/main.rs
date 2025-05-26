@@ -9,7 +9,7 @@ mod database;
 mod models;
 
 use admin::{AdminCommand};
-use message::{cleanup_old_messages}; // Removed unused import
+use message::{cleanup_old_messages, handle_message_predictive}; // Added predictive handler
 use database::Database;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
@@ -27,6 +27,7 @@ async fn main() {
     // Clone untuk menghindari move issues
     let db_message = db.clone();
     let db_admin = db.clone();
+    let db_predictive = db.clone(); // Clone untuk predictive handler
 
     let handler = dptree::entry()
         .branch(
@@ -49,15 +50,24 @@ async fn main() {
         .branch(
             Update::filter_message()
                 .endpoint(move |bot: Bot, msg: Message| {
-                    let db = db_message.clone();
+                    let db_msg = db_message.clone();
+                    let db_pred = db_predictive.clone();
                     async move {
-                        match message::handle_message(bot, db, msg).await {
-                            Ok(_) => Ok::<(), teloxide::RequestError>(()),
-                            Err(e) => {
-                                log::debug!("Message handling error: {:?}", e);
-                                Ok(())
-                            }
+                        // Jalankan kedua handler secara paralel untuk performa optimal
+                        let (result1, result2) = tokio::join!(
+                            message::handle_message(bot.clone(), db_msg, msg.clone()),
+                            handle_message_predictive(bot, db_pred, msg)
+                        );
+
+                        // Handle errors dari kedua handler
+                        if let Err(e) = result1 {
+                            log::debug!("Message handling error: {:?}", e);
                         }
+                        if let Err(e) = result2 {
+                            log::debug!("Predictive handling error: {:?}", e);
+                        }
+
+                        Ok::<(), teloxide::RequestError>(())
                     }
                 })
         );
