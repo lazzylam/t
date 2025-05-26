@@ -83,8 +83,8 @@ impl LoggingErrorHandler {
 }
 
 impl<E> ErrorHandler<E> for LoggingErrorHandler
-where
-    E: Debug,
+   where
+       E: Debug + Send,
 {
     fn handle_error(self: std::sync::Arc<Self>, error: E) -> BoxFuture<'static, ()> {
         Box::pin(async move {
