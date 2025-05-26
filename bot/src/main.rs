@@ -8,7 +8,7 @@ mod message;
 mod database;
 mod models;
 
-use admin::{AdminCommand, handle_command};
+use admin::{AdminCommand};
 use message::{cleanup_old_messages}; // Removed unused import
 use database::Database;
 
@@ -34,10 +34,10 @@ async fn main() {
                 .filter_command::<AdminCommand>()
                 .endpoint(move |bot: Bot, msg: Message, cmd: AdminCommand| {
                     let db = db_admin.clone();
-                    async move -> Result<(), teloxide::RequestError> { 
+                    async move { 
                         // Wrap dengan error handling yang tidak mengganggu performa
-                        match handle_command(bot, db, msg, cmd).await {
-                            Ok(_) => Ok(()),
+                        match admin::handle_command(bot, db, msg, cmd).await {
+                            Ok(_) => Ok::<(), teloxide::RequestError>(()),
                             Err(e) => {
                                 log::warn!("Admin command error: {:?}", e);
                                 Ok(())
@@ -50,9 +50,9 @@ async fn main() {
             Update::filter_message()
                 .endpoint(move |bot: Bot, msg: Message| {
                     let db = db_message.clone();
-                    async move -> Result<(), teloxide::RequestError> {
+                    async move {
                         match message::handle_message(bot, db, msg).await {
-                            Ok(_) => Ok(()),
+                            Ok(_) => Ok::<(), teloxide::RequestError>(()),
                             Err(e) => {
                                 log::debug!("Message handling error: {:?}", e);
                                 Ok(())
