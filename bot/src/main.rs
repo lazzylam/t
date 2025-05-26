@@ -47,21 +47,20 @@ async fn main() {
                 })
         )
         .branch(
-            Update::filter_message()
-                .endpoint(move |bot: Bot, msg: Message| {
-                    let db = db_message.clone();
-                    async move { 
-                        // Ultra-fast message handling dengan zero-latency error handling
-                        match handle_message(bot, db, msg).await {
-                            Ok(_) => Ok(()),
-                            Err(e) => {
-                                log::debug!("Message handling error: {:?}", e);
-                                Ok(())
-                            }
-                        }
+    Update::filter_message()
+        .endpoint(move |bot: Bot, msg: Message| {
+            let db = db_message.clone();
+            async move -> Result<(), Box<dyn std::error::Error + Send + Sync>> { 
+                match handle_message(bot, db, msg).await {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        log::debug!("Message handling error: {:?}", e);
+                        Ok(())
                     }
-                })
-        );
+                }
+            }
+        })
+);
 
     // Optimized dispatcher dengan custom error handler
     Dispatcher::builder(bot, handler)
