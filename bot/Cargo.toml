@@ -18,10 +18,3 @@ futures-util = "0.3"
 ahash = "0.8"  # Faster HashMap
 dashmap = "5.5"  # Concurrent HashMap
 parking_lot = "0.12"  # Faster Mutex alternative
-
-[profile.release]
-# Optimasi untuk performa maksimal
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true
